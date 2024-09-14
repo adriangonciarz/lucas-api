@@ -1,21 +1,59 @@
-import base64
-from typing import Union
+import os
+from typing import Optional, List
 
+import motor.motor_asyncio
+from dotenv import load_dotenv
 from fastapi import FastAPI
-
 from pydantic import BaseModel
+from pydantic import ConfigDict, Field
+from pydantic.functional_validators import BeforeValidator
+from typing_extensions import Annotated
 
-app = FastAPI()
+load_dotenv()
+
+app = FastAPI(
+    title="Lucas API",
+    summary="API delivering product feed to Lucas App",
+)
+
+client = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGODB_URI"])
+db = client.products
+products_collection = db.get_collection("products")
+
+PyObjectId = Annotated[str, BeforeValidator(str)]
 
 
 class Product(BaseModel):
-    name: str
-    brand: str
-    price: float
-    currency: str
-    description: str
-    main_image_url: str
-    image_urls: [str]
+    """
+    Container for a single product record.
+    """
+    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    name: str = Field(...)
+    brand: str = Field(...)
+    price: float = Field(...)
+    currency: Optional[str] = None
+    description: str = Field(...)
+    main_image: str = Field(...)
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_schema_extra={
+            "example": {
+                "id": "66e5e656780c8d12a96ebebb",
+                "name": "Tom Anderson Classic S Sunburst 2001",
+                "brand": "Tom Anderson Guitarworks",
+                "price": 14000.0,
+                "currency": None,
+                "description": "base64_string",
+                "main_image": "https://example.com/example_image.jpg"
+            },
+        },
+    )
+
+
+class ProductsCollection(BaseModel):
+    products: List[Product]
 
 
 @app.get("/")
@@ -23,33 +61,11 @@ async def read_root():
     return {"Hello": "World"}
 
 
-@app.get("/products")
-async def get_all_products() -> list[Product]:
-    all_products = [
-        Product(name="Mezzabarba Skill 30 Head, Brown Tolex",
-                brand="Mezzabarba",
-                price=6500.00,
-                currency="PLN",
-                description=base64.b64encode("""<p>One of the best modern guitar amplifiers produced today. It is a variation on the Soldano SLO, in a smaller form factor, and with slightly less power. It has two channels that allow 3 configurations: Clean, crunch, and overdrive. Clean is a very tight, fairly compressed round sound, in crunch an aggressive, Marshall-like midrange begins to emerge, and overdrive is a combination of Marshall and Soldano (very aggressive, fast midrange). EQ allows for a palette ranging from fusion to hard rock to modern metal. Although it's an amp for the more aggressive players - it cuts through the mix very well and also allows for achieving the sound of 80s players, such as Steve Luakter or Steve Stevens. One of the most recognized users of Mezzabarba amplifiers is Erik Steckel.</p>
-                    <p>It has EQ for both channels, an effects loop, two separate masters, depth and presence controls, and a power control. A footswitch with cable and power cable are included.</p>
-                    <ul>
-                    <li>100% engineered and handmade in Italy.</li>
-                    <li>2 Channels: recallable via footswitch</li>
-                    <li>The serial, full-tube effects loop is recallable via footswitch.</li>
-                    <li>The bright switch on the Clean channel boosts mid-high frequencies for utmost transparency. Boost switch saturates channel.</li>
-                    <li>Innovative Power Control “scales down” amp and allows it to perform at maximum saturation and dynamics even at very low volumes</li>
-                    <li>Like all Mezzabarba amps, the power amp section features oversized transformers that deliver the best and most solid sound in any condition, at any volume.</li>
-                    <li>Power amp tubes: EL34</li>
-                    <li>Presence and Depth controls for ultimate sound chiseling</li>
-                    </ul>
-                    <!---->""".encode('utf-8')),
-                main_image_url="https://cdn.shopify.com/s/files/1/0617/2262/4241/files/mezzabarba_skill-5.jpg?v=1721395311",
-                image_urls = []
-                ),
-    ]
-    return all_products
-
-
-@app.get("/products/{product_id}")
-async def read_product(product_id: int, q: Union[str, None] = None):
-    return {"item_id": product_id, "q": q}
+@app.get(
+    "/products/",
+    response_description="List all products",
+    response_model=ProductsCollection,
+    response_model_by_alias=False,
+)
+async def get_all_products():
+    return ProductsCollection(products=await products_collection.find().to_list(1000))
